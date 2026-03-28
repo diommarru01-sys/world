@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Uzay Çöpü Takip Modeli</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #020617;
+      font-family: Arial, sans-serif;
+    }
+
+    #app {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hud {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      z-index: 20;
+      color: white;
+      background: rgba(0, 0, 0, 0.45);
+      padding: 14px 16px;
+      border-radius: 14px;
+      min-width: 320px;
+      box-shadow: 0 0 24px rgba(0,0,0,0.3);
+    }
+
+    .title {
+      font-size: 22px;
+      font-weight: bold;
+      color: #93c5fd;
+      margin-bottom: 8px;
+    }
+
+    .line {
+      font-size: 14px;
+      margin: 5px 0;
+    }
+
+    .danger {
+      color: #f87171;
+      font-weight: bold;
+    }
+
+    .safe {
+      color: #4ade80;
+      font-weight: bold;
+    }
+
+    .legend {
+      position: absolute;
+      left: 14px;
+      bottom: 14px;
+      z-index: 20;
+      color: white;
+      background: rgba(0, 0, 0, 0.42);
+      padding: 12px 14px;
+      border-radius: 12px;
+      line-height: 1.7;
+      font-size: 14px;
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 8px;
+    }
+
+    .topRight {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      z-index: 20;
+      color: white;
+      background: rgba(0, 0, 0, 0.42);
+      padding: 12px 14px;
+      border-radius: 12px;
+      text-align: right;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .help {
+      position: absolute;
+      right: 14px;
+      bottom: 14px;
+      z-index: 20;
+      color: #cbd5e1;
+      background: rgba(0, 0, 0, 0.35);
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .errorBox {
+      position: absolute;
+      top: 170px;
+      left: 14px;
+      z-index: 30;
+      color: #fecaca;
+      background: rgba(127, 29, 29, 0.92);
+      padding: 12px 14px;
+      border-radius: 12px;
+      max-width: 560px;
+      white-space: pre-wrap;
+      display: none;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="hud">
+      <div class="title">Uzay Çöpü Takip Modeli</div>
+      <div class="line" id="satCount">Türk uydu sayısı: 0</div>
+      <div class="line" id="debrisCount">Uzay çöpü sayısı: 0</div>
+      <div class="line" id="riskCount">Riskli yakınlaşma: 0</div>
+      <div class="line" id="statusText">Durum: Başlatılıyor</div>
+    </div>
+
+    <div class="topRight">
+      3D Dünya + Türk Uyduları<br>
+      Uzay Çöpü Görselleştirme
+    </div>
+
+    <div class="legend">
+      <div><span class="dot" style="background:#22d3ee"></span>Türk uyduları</div>
+      <div><span class="dot" style="background:#ef4444"></span>Uzay çöpü</div>
+      <div><span class="dot" style="background:#facc15"></span>Risk hattı</div>
+      <div><span class="dot" style="background:#60a5fa"></span>Dünya atmosferi</div>
+    </div>
+
+    <div class="help">
+      Sol tık + sürükle: döndür<br>
+      Mouse wheel: yakınlaştır / uzaklaştır
+    </div>
+
+    <div id="errorBox" class="errorBox"></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    const satCountEl = document.getElementById("satCount");
+    const debrisCountEl = document.getElementById("debrisCount");
+    const riskCountEl = document.getElementById("riskCount");
+    const statusTextEl = document.getElementById("statusText");
+    const errorBox = document.getElementById("errorBox");
+    const app = document.getElementById("app");
+
+    function showError(msg) {
+      errorBox.style.display = "block";
+      errorBox.textContent = msg;
+      statusTextEl.innerHTML = 'Durum: <span class="danger">Hata oluştu</span>';
+    }
+
+    function makeEarthTexture() {
+      const canvas = document.createElement("canvas");
+      canvas.width = 2048;
+      canvas.height = 1024;
+      const ctx = canvas.getContext("2d");
+
+      const ocean = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      ocean.addColorStop(0, "#0a2a66");
+      ocean.addColorStop(0.35, "#114c9a");
+      ocean.addColorStop(0.7, "#1d74c9");
+      ocean.addColorStop(1, "#0b3876");
+      ctx.fillStyle = ocean;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      function blob(x, y, rx, ry, color, alpha = 1) {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      function layeredLand(x, y, rx, ry, rot = 0) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(rot);
+
+        ctx.fillStyle = "#b7f0c4";
+        ctx.beginPath();
+        ctx.ellipse(0, 0, rx + 18, ry + 14, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#6fd69f";
+        ctx.beginPath();
+        ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        blob(0, -10, rx * 0.72, ry * 0.55, "#58c77f");
+        blob(-rx * 0.18, ry * 0.10, rx * 0.30, ry * 0.22, "#4fb86d");
+        blob(rx * 0.15, -ry * 0.08, rx * 0.24, ry * 0.18, "#7ddd9c");
+
+        blob(rx * 0.10, ry * 0.05, rx * 0.20, ry * 0.12, "#d7c07c", 0.75);
+        blob(-rx * 0.22, -ry * 0.03, rx * 0.16, ry * 0.10, "#c9b36b", 0.55);
+
+        ctx.strokeStyle = "rgba(40,80,50,0.35)";
+        ctx.lineWidth = 10;
+        ctx.beginPath();
+        ctx.moveTo(-rx * 0.45, -ry * 0.05);
+        ctx.quadraticCurveTo(-rx * 0.10, -ry * 0.35, rx * 0.28, -ry * 0.05);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      layeredLand(820, 255, 260, 120, 0.08);
+      layeredLand(1040, 290, 185, 110, -0.15);
+      layeredLand(930, 210, 120, 75, 0.22);
+      layeredLand(1500, 610, 180, 130, -0.5);
+      layeredLand(1650, 230, 125, 80, 0.12);
+      layeredLand(620, 620, 150, 105, 0.35);
+      layeredLand(1240, 655, 145, 120, -0.15);
+
+      for (let i = 0; i < 35; i++) {
+        blob(
+          150 + Math.random() * 1700,
+          120 + Math.random() * 780,
+          8 + Math.random() * 18,
+          5 + Math.random() * 12,
+          "#9ae6b4",
+          0.8
+        );
+      }
+
+      for (let i = 0; i < 120; i++) {
+        blob(
+          Math.random() * canvas.width,
+          Math.random() * canvas.height,
+          18 + Math.random() * 40,
+          8 + Math.random() * 22,
+          "#52b5ea",
+          0.07
+        );
+      }
+
+      ctx.fillStyle = "rgba(245,250,255,0.95)";
+      ctx.beginPath();
+      ctx.ellipse(canvas.width / 2, 65, 650, 55, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.ellipse(canvas.width / 2, 960, 610, 60, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      for (let i = 0; i < 80; i++) {
+        blob(
+          Math.random() * canvas.width,
+          Math.random() * canvas.height,
+          25 + Math.random() * 90,
+          10 + Math.random() * 30,
+          "#dff6ff",
+          0.04
+        );
+      }
+
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    function makeCloudTexture() {
+      const canvas = document.createElement("canvas");
+      canvas.width = 2048;
+      canvas.height = 1024;
+      const ctx = canvas.getContext("2d");
+
+      function cloud(x, y, rx, ry, alpha) {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        const g = ctx.createRadialGradient(x, y, 0, x, y, rx);
+        g.addColorStop(0, "rgba(255,255,255,0.95)");
+        g.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      for (let i = 0; i < 120; i++) {
+        cloud(
+          Math.random() * canvas.width,
+          Math.random() * canvas.height,
+          30 + Math.random() * 120,
+          10 + Math.random() * 45,
+          0.18 + Math.random() * 0.2
+        );
+      }
+
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    function clearGroup(group) {
+      while (group.children.length > 0) {
+        const child = group.children[0];
+        group.remove(child);
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) child.material.dispose();
+      }
+    }
+
+    function updateHud(satCount, debrisCount, riskCount) {
+      satCountEl.textContent = "Türk uydu sayısı: " + satCount;
+      debrisCountEl.textContent = "Uzay çöpü sayısı: " + debrisCount;
+      riskCountEl.textContent = "Riskli yakınlaşma: " + riskCount;
+
+      if (riskCount > 0) {
+        statusTextEl.innerHTML = 'Durum: <span class="danger">Çarpışma riski algılandı</span>';
+      } else {
+        statusTextEl.innerHTML = 'Durum: <span class="safe">Sistem normal</span>';
+      }
+    }
+
+    if (typeof THREE === "undefined") {
+      showError("Three.js yüklenemedi. İnternet bağlantısını kontrol et.");
+    } else {
+      try {
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x020617);
+
+        const camera = new THREE.PerspectiveCamera(
+          55,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          1000
+        );
+        let cameraDistance = 8;
+        camera.position.set(0, 0, cameraDistance);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.domElement.style.position = "absolute";
+        renderer.domElement.style.left = "0";
+        renderer.domElement.style.top = "0";
+        renderer.domElement.style.zIndex = "1";
+        app.prepend(renderer.domElement);
+
+        const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambient);
+
+        const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+        sun.position.set(8, 5, 10);
+        scene.add(sun);
+
+        const back = new THREE.DirectionalLight(0x4f83ff, 0.35);
+        back.position.set(-8, -2, -8);
+        scene.add(back);
+
+        const starGeo = new THREE.BufferGeometry();
+        const starCount = 2500;
+        const starPositions = new Float32Array(starCount * 3);
+
+        for (let i = 0; i < starCount; i++) {
+          const r = 90 + Math.random() * 110;
+          const theta = Math.random() * Math.PI * 2;
+          const phi = Math.acos((Math.random() * 2) - 1);
+
+          starPositions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+          starPositions[i * 3 + 1] = r * Math.cos(phi);
+          starPositions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+        }
+
+        starGeo.setAttribute("position", new THREE.BufferAttribute(starPositions, 3));
+        const stars = new THREE.Points(
+          starGeo,
+          new THREE.PointsMaterial({ color: 0xffffff, size: 0.2, sizeAttenuation: true })
+        );
+        scene.add(stars);
+
+        const worldGroup = new THREE.Group();
+        scene.add(worldGroup);
+
+        const earth = new THREE.Mesh(
+          new THREE.SphereGeometry(2, 96, 96),
+          new THREE.MeshPhongMaterial({
+            map: makeEarthTexture(),
+            shininess: 28,
+            specular: new THREE.Color(0x2a2a2a)
+          })
+        );
+        worldGroup.add(earth);
+
+        const clouds = new THREE.Mesh(
+          new THREE.SphereGeometry(2.05, 96, 96),
+          new THREE.MeshPhongMaterial({
+            map: makeCloudTexture(),
+            transparent: true,
+            opacity: 0.42,
+            depthWrite: false
+          })
+        );
+        worldGroup.add(clouds);
+
+        const atmosphere = new THREE.Mesh(
+          new THREE.SphereGeometry(2.10, 96, 96),
+          new THREE.MeshPhongMaterial({
+            color: 0x7fc8ff,
+            transparent: true,
+            opacity: 0.14,
+            side: THREE.DoubleSide
+          })
+        );
+        worldGroup.add(atmosphere);
+
+        const glow = new THREE.Mesh(
+          new THREE.SphereGeometry(2.22, 96, 96),
+          new THREE.MeshBasicMaterial({
+            color: 0x5aa9ff,
+            transparent: true,
+            opacity: 0.08,
+            side: THREE.BackSide
+          })
+        );
+        worldGroup.add(glow);
+
+        const orbitRingGroup = new THREE.Group();
+        worldGroup.add(orbitRingGroup);
+
+        const riskLineGroup = new THREE.Group();
+        worldGroup.add(riskLineGroup);
+
+        function addRing(radius, tiltX, tiltZ, color, opacity) {
+          const points = [];
+          for (let i = 0; i <= 128; i++) {
+            const a = (i / 128) * Math.PI * 2;
+            points.push(new THREE.Vector3(
+              Math.cos(a) * radius,
+              0,
+              Math.sin(a) * radius
+            ));
+          }
+
+          const geometry = new THREE.BufferGeometry().setFromPoints(points);
+          const material = new THREE.LineBasicMaterial({
+            color: color,
+            transparent: true,
+            opacity: opacity
+          });
+
+          const line = new THREE.Line(geometry, material);
+          line.rotation.x = tiltX;
+          line.rotation.z = tiltZ;
+          orbitRingGroup.add(line);
+        }
+
+        function createOrbiter(spec) {
+          const pivot = new THREE.Object3D();
+          pivot.rotation.x = spec.tiltX;
+          pivot.rotation.z = spec.tiltZ;
+          worldGroup.add(pivot);
+
+          const mesh = new THREE.Mesh(
+            new THREE.SphereGeometry(spec.size, 16, 16),
+            new THREE.MeshBasicMaterial({ color: spec.color })
+          );
+
+          mesh.position.set(spec.radius, 0, 0);
+          pivot.add(mesh);
+
+          return {
+            name: spec.name,
+            type: spec.type,
+            radius: spec.radius,
+            speed: spec.speed,
+            phase: spec.phase,
+            pivot: pivot,
+            mesh: mesh
+          };
+        }
+
+        const satSpecs = [
+          { name: "TÜRKSAT 5A", radius: 3.85, size: 0.09, speed: 0.0020, phase: 0.2, tiltX: 0.03, tiltZ: 0.01, color: 0x22d3ee, type: "satellite" },
+          { name: "TÜRKSAT 5B", radius: 3.95, size: 0.09, speed: 0.0018, phase: 1.1, tiltX: 0.02, tiltZ: -0.02, color: 0x22d3ee, type: "satellite" },
+          { name: "TÜRKSAT 6A", radius: 3.90, size: 0.10, speed: 0.0019, phase: 2.0, tiltX: -0.02, tiltZ: 0.03, color: 0x22d3ee, type: "satellite" },
+          { name: "GÖKTÜRK-1", radius: 3.10, size: 0.08, speed: 0.0090, phase: 0.6, tiltX: 1.05, tiltZ: 0.35, color: 0x22d3ee, type: "satellite" },
+          { name: "GÖKTÜRK-2", radius: 3.00, size: 0.08, speed: 0.0105, phase: 1.8, tiltX: 0.92, tiltZ: -0.42, color: 0x22d3ee, type: "satellite" },
+          { name: "İMECE", radius: 2.95, size: 0.085, speed: 0.0112, phase: 2.9, tiltX: 0.78, tiltZ: 0.58, color: 0x22d3ee, type: "satellite" }
+        ];
+
+        const satellites = satSpecs.map(createOrbiter);
+        satSpecs.forEach(s => addRing(s.radius, s.tiltX, s.tiltZ, 0x22d3ee, 0.18));
+
+        const debris = [];
+        for (let i = 0; i < 55; i++) {
+          debris.push(createOrbiter({
+            name: "DEBRIS-" + (i + 1),
+            type: "debris",
+            color: 0xef4444,
+            radius: 2.7 + Math.random() * 1.7,
+            size: 0.035 + Math.random() * 0.02,
+            speed: 0.005 + Math.random() * 0.012,
+            phase: Math.random() * Math.PI * 2,
+            tiltX: (Math.random() - 0.5) * 2.6,
+            tiltZ: (Math.random() - 0.5) * 2.6
+          }));
+        }
+
+        for (let i = 0; i < 12; i++) {
+          const ref = satSpecs[i % satSpecs.length];
+          debris.push(createOrbiter({
+            name: "RISK-DEBRIS-" + (i + 1),
+            type: "debris",
+            color: 0xef4444,
+            radius: ref.radius + (Math.random() * 0.14 - 0.07),
+            size: 0.045,
+            speed: ref.speed + (Math.random() * 0.0015 - 0.00075),
+            phase: ref.phase + (Math.random() * 0.5 - 0.25),
+            tiltX: ref.tiltX + (Math.random() * 0.2 - 0.1),
+            tiltZ: ref.tiltZ + (Math.random() * 0.2 - 0.1)
+          }));
+        }
+
+        function getPos(item) {
+          const pos = new THREE.Vector3();
+          item.mesh.getWorldPosition(pos);
+          return pos;
+        }
+
+        function addRiskLine(a, b) {
+          const geometry = new THREE.BufferGeometry().setFromPoints([a, b]);
+          const material = new THREE.LineBasicMaterial({
+            color: 0xfacc15,
+            transparent: true,
+            opacity: 0.95
+          });
+          riskLineGroup.add(new THREE.Line(geometry, material));
+        }
+
+        let dragging = false;
+        let lastX = 0;
+        let lastY = 0;
+        let targetRotX = 0.35;
+        let targetRotY = -0.55;
+
+        app.addEventListener("mousedown", (e) => {
+          dragging = true;
+          lastX = e.clientX;
+          lastY = e.clientY;
+        });
+
+        window.addEventListener("mouseup", () => {
+          dragging = false;
+        });
+
+        window.addEventListener("mousemove", (e) => {
+          if (!dragging) return;
+          const dx = e.clientX - lastX;
+          const dy = e.clientY - lastY;
+          lastX = e.clientX;
+          lastY = e.clientY;
+
+          targetRotY += dx * 0.005;
+          targetRotX += dy * 0.005;
+
+          const limit = 1.2;
+          if (targetRotX > limit) targetRotX = limit;
+          if (targetRotX < -limit) targetRotX = -limit;
+        });
+
+        app.addEventListener("wheel", (e) => {
+          e.preventDefault();
+          cameraDistance += e.deltaY * 0.005;
+          if (cameraDistance < 4.8) cameraDistance = 4.8;
+          if (cameraDistance > 18) cameraDistance = 18;
+        }, { passive: false });
+
+        let t = 0;
+        updateHud(satellites.length, debris.length, 0);
+
+        function animate() {
+          requestAnimationFrame(animate);
+
+          t += 1;
+          earth.rotation.y += 0.0018;
+          clouds.rotation.y += 0.0024;
+          atmosphere.rotation.y += 0.0012;
+          glow.rotation.y += 0.0007;
+
+          worldGroup.rotation.x += (targetRotX - worldGroup.rotation.x) * 0.08;
+          worldGroup.rotation.y += (targetRotY - worldGroup.rotation.y) * 0.08;
+
+          for (let i = 0; i < satellites.length; i++) {
+            satellites[i].pivot.rotation.y = satellites[i].phase + t * satellites[i].speed;
+          }
+
+          for (let i = 0; i < debris.length; i++) {
+            debris[i].pivot.rotation.y = debris[i].phase + t * debris[i].speed;
+          }
+
+          clearGroup(riskLineGroup);
+
+          let riskCount = 0;
+          for (let i = 0; i < satellites.length; i++) {
+            const a = getPos(satellites[i]);
+            for (let j = 0; j < debris.length; j++) {
+              const b = getPos(debris[j]);
+              const d = a.distanceTo(b);
+              if (d < 0.42) {
+                riskCount++;
+                if (riskCount <= 20) addRiskLine(a, b);
+              }
+            }
+          }
+
+          updateHud(satellites.length, debris.length, riskCount);
+          camera.position.set(0, 0, cameraDistance);
+          camera.lookAt(0, 0, 0);
+          renderer.render(scene, camera);
+        }
+
+        animate();
+
+        window.addEventListener("resize", () => {
+          camera.aspect = window.innerWidth / window.innerHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+      } catch (err) {
+        showError("JavaScript hatası:\n\n" + (err && err.stack ? err.stack : err));
+      }
+    }
+  </script>
+</body>
+</html>
