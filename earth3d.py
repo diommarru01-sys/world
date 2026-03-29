@@ -1,13 +1,18 @@
 from pathlib import Path
-import webview
+import webview # web_gorunumu yerine orijinal kütüphane adı
 
-html_file = Path(__file__).with_name("earth.html")
+# Dosya yolunu belirle
+html_dosyasi = Path(__file__).parent / "dunya.html"
 
-webview.create_window(
-    "Earth 3D Hackathon",
-    html_file.resolve().as_uri(),
-    width=1280,
-    height=800
+# Pencereyi oluştur (Burası kritik!)
+window = webview.create_window(
+    "ORBIT-EYE | Discord Kronos GGrid - Milli Uydu Takip Sistemi",
+    html_dosyasi.resolve().as_uri(),
+    width=1400, # Biraz daha geniş, profesyonel görünür
+    height=900,
+    resizable=True, # Jürinin ekranına göre ayarlanabilir
+    confirm_close=True # Yanlışlıkla kapanmasın
 )
 
+# Başlat
 webview.start()
